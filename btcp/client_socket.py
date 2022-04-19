@@ -71,6 +71,11 @@ class BTCPClientSocket(BTCPSocket):
 
         Remember, we expect you to implement this *as a state machine!*
         """
+
+        #TODO 1: unpack segment
+        #TODO 2: give buffer to checksum generating function
+        #TODO 3: check the value of TODO 2 to know if the checksum was valified
+
         pass # present to be able to remove the NotImplementedError without having to implement anything yet.
         raise NotImplementedError("No implementation of lossy_layer_segment_received present. Read the comments & code of client_socket.py.")
 
@@ -161,6 +166,19 @@ class BTCPClientSocket(BTCPSocket):
         boolean or enum has the expected value. We do not think you will need
         more advanced thread synchronization in this project.
         """
+
+        #TODO:
+        # 1 The client randomly generates a 16-bit value, say x, puts this in the Sequence Number field
+        # of a bTCP segment with the SYN flag set, and sends the segment to the server.
+
+        # 2 is handled by the server
+
+        # 3  The client puts y + 1 in the Acknowledgement Number
+        # field of a bTCP segment with the ACK flag set. The Sequence Number field of that segment
+        # is x + 1.
+
+        #TODO: window size (section 2.6)
+
         pass # present to be able to remove the NotImplementedError without having to implement anything yet.
         raise NotImplementedError("No implementation of connect present. Read the comments & code of client_socket.py.")
 
@@ -227,9 +245,13 @@ class BTCPClientSocket(BTCPSocket):
         boolean or enum has the expected value. We do not think you will need
         more advanced thread synchronization in this project.
         """
+
+        #TODO: section 2.3
+        
         pass # present to be able to remove the NotImplementedError without having to implement anything yet.
         raise NotImplementedError("No implementation of shutdown present. Read the comments & code of client_socket.py.")
 
+    ## NO MODIFICATIONS NEEDED BELOW HERE
 
     def close(self):
         """Cleans up any internal state by at least destroying the instance of
