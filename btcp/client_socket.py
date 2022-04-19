@@ -1,3 +1,4 @@
+import socket
 from btcp.btcp_socket import BTCPSocket, BTCPStates
 from btcp.lossy_layer import LossyLayer
 from btcp.constants import *
@@ -48,6 +49,12 @@ class BTCPClientSocket(BTCPSocket):
         # thread into the network thread. Bounded in size.
         self._sendbuf = queue.Queue(maxsize=1000)
         self._receivebuf = queue.Queue(maxsize=1000)
+
+        #set socket
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        #set timeout in seconds
+        self.socket.settimeout(1.5)
 
 
     ###########################################################################
@@ -203,10 +210,21 @@ class BTCPClientSocket(BTCPSocket):
         header = (seq_num, 0, '0x1', self.window, 0, checksum)
 
         #pack header for usage inside pack and create packet
-        pack = (sock.build_segment_header(temp_header), payload)
+        pack = (sock.build_segment_header(header), payload)
 
-        # self._sendbuf = queue for sending
+        #add package to sendbuf
+        self._sendbuf.put(pack)
 
+        #use socket to send data to address
+        done = False 
+        while done == False:
+            try: 
+                #block if neccesarry until something is available, timeout = 1.5 seconds
+                data, addr = self._sendbuf.get(True, 1.5)
+                self.socket.sendto(data, addr)
+            except queue.empty:
+                pass
+            #TODO: catch errors in except (OSERROR?)
         #TODO: send syn packet to server
 
         #get header checksum
