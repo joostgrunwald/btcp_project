@@ -1,6 +1,7 @@
 from btcp.btcp_socket import BTCPSocket, BTCPStates
 from btcp.lossy_layer import LossyLayer
 from btcp.constants import *
+from random import randint
 
 import queue
 
@@ -38,6 +39,7 @@ class BTCPClientSocket(BTCPSocket):
         initialized, but do *not* call connect from here.
         """
         super().__init__(window, timeout)
+        self.connection = False
         self._lossy_layer = LossyLayer(self, CLIENT_IP, CLIENT_PORT, SERVER_IP, SERVER_PORT)
 
         # The data buffer used by send() to send data from the application
@@ -167,6 +169,21 @@ class BTCPClientSocket(BTCPSocket):
         more advanced thread synchronization in this project.
         """
 
+        #check if there is no connection yet
+        if (self.connection):
+            print("ERROR: there is already an connection present")
+            #TODO: exception or termination of some kind?
+
+        print("Starting phase one of three way handshake")
+        
+        #create random number
+        ran_num = ''
+        for i in range(16):
+            ran_num = ran_num + str(randint(0, 9))
+
+        print("Starting phase two of three way handshake")
+
+        print("Starting phase three of three way handshake")
         #TODO:
         # 1 The client randomly generates a 16-bit value, say x, puts this in the Sequence Number field
         # of a bTCP segment with the SYN flag set, and sends the segment to the server.
@@ -179,8 +196,14 @@ class BTCPClientSocket(BTCPSocket):
 
         #TODO: window size (section 2.6)
 
-        pass # present to be able to remove the NotImplementedError without having to implement anything yet.
-        raise NotImplementedError("No implementation of connect present. Read the comments & code of client_socket.py.")
+        #pass # present to be able to remove the NotImplementedError without having to implement anything yet.
+        #raise NotImplementedError("No implementation of connect present. Read the comments & code of client_socket.py.")
+
+
+        #we only return after finishing the connection
+        self.connection = True
+        print("Succesfully connected")
+        return True
 
 
     def send(self, data):
@@ -247,7 +270,7 @@ class BTCPClientSocket(BTCPSocket):
         """
 
         #TODO: section 2.3
-        
+
         pass # present to be able to remove the NotImplementedError without having to implement anything yet.
         raise NotImplementedError("No implementation of shutdown present. Read the comments & code of client_socket.py.")
 
