@@ -248,7 +248,13 @@ class BTCPClientSocket(BTCPSocket):
         flag_byte = header_temp[2]
         window = header_temp[3]
         length = header_temp[4]
+        
+        #this is the given checksum
         checksum = header_temp[5]
+        
+        #we calculate our own checksum from our data to compare
+        checksum_comp = sock.in_cksum(sock.build_segment_header(header_temp) + payload)
+        
         
         #check that header is not empty
         if ( header_temp is not None
@@ -259,7 +265,7 @@ class BTCPClientSocket(BTCPSocket):
             #check that ACK FLAG is set
             and (flag_byte & '0x2') > 0
             #check that the checksum works
-            #TODO verify checksum condition
+            and checksum == checksum_comp
             
         ):
             syn_number = ack_number
