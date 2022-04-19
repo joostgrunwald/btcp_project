@@ -1,6 +1,7 @@
 from btcp.btcp_socket import BTCPSocket, BTCPStates
 from btcp.lossy_layer import LossyLayer
 from btcp.constants import *
+from random import getrandbits
 
 import queue
 import struct
@@ -159,7 +160,7 @@ class BTCPServerSocket(BTCPSocket):
     ### above.                                                              ###
     ###########################################################################
 
-    def accept(self):
+    def accept(self, timeout):
         """Accept and perform the bTCP three-way handshake to establish a
         connection.
 
@@ -176,8 +177,34 @@ class BTCPServerSocket(BTCPSocket):
         boolean or enum has the expected value. We do not think you will need
         more advanced thread synchronization in this project.
         """
+        sock = BTCPSocket(self.window, timeout)
+
+        #received packet
+        rpacket = self._recvbuf.get()
+
+        if not None and \
+                rpacket.flags.syn == 1\
+                and sock.in_cksum(rpacket) == rpacket.checksum:
+            ack_num = rpacket.seq_num + 1
+        else:
+            return False
+
+        #create random number
+        seq_num = getrandbits(16)
+
+        #create packet
+        header = sock.build_segment_header(seq_num, ack_num, flags, self.window, 0, checksum)
+        packet = (header, payload)
+
+        checksum = sock.in_cksum(header + payload)
+
+        
+
+
         pass # present to be able to remove the NotImplementedError without having to implement anything yet.
         raise NotImplementedError("No implementation of accept present. Read the comments & code of server_socket.py.")
+
+        
 
 
     def recv(self):
