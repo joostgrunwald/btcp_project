@@ -235,16 +235,61 @@ class BTCPClientSocket(BTCPSocket):
         except queue.Empty:
             return False      
         
-        #TODO: get packet from bytes
-        #TODO: check if ack = syn + 1
+        #check if header is long enough
+        if len(data) < 16:
+            raise ValueError("header is not long enough")
+        
+        #get unpacked header
+        header_temp = sock.unpack_segment_header(data)
+        
+        #unpack header
+        syn_number = header_temp[0]
+        ack_number = header_temp[1]
+        flag_byte = header_temp[2]
+        window = header_temp[3]
+        length = header_temp[4]
+        checksum = header_temp[5]
+        
+        #check that header is not empty
+        if ( header_temp is not None
+            #check that ACK = SYN + 1
+            and ack_number == syn_number + 1 
+            #check that SYN FLAG is set
+            and (flag_byte & '0x1') > 0
+            #check that ACK FLAG is set
+            and (flag_byte & '0x2') > 0
+            #check that the checksum works
+            #TODO verify checksum condition
+            
+        ):
+            syn_number = ack_number
+        else:
+            #exit connect function
+            return False 
 
         print("Starting phase three of three way handshake")
 
-        #TODO: window size (section 2.6)
+        #set window to parameter
+        self.window = window
         
-        #TODO: send ack to server
+        #create temp header and payload
+        temp_header = (0, syn_number, '0x2', self.window, 0, 0)
+        payload = bytes(1000)
+        
+        #create checksum and new header with checksum
+        checksum = sock.in_cksum(sock.build_segment_header(temp_header) + payload)
+        header = (0, syn_number, '0x2', self.window, 0, checksum)
+        
+        #create a pack
+        pack = (sock.build_segment_header(header), payload)
+        
+        #add package to sendbuf
+        self._sendbuf.put(pack)
+        
+        #ack is now automaticly send to the server by the sender
 
         #we only return after finishing the connection
+        #TODO: maybe set some more self values here
         self.connection = True
         print("Succesfully connected")
         return True
