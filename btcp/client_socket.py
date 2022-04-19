@@ -1,7 +1,7 @@
 from btcp.btcp_socket import BTCPSocket, BTCPStates
 from btcp.lossy_layer import LossyLayer
 from btcp.constants import *
-from random import randint
+from random import getrandbits
 
 import queue
 
@@ -40,11 +40,14 @@ class BTCPClientSocket(BTCPSocket):
         """
         super().__init__(window, timeout)
         self.connection = False
+        self.window = window
+        self.timeout = timeout
         self._lossy_layer = LossyLayer(self, CLIENT_IP, CLIENT_PORT, SERVER_IP, SERVER_PORT)
 
         # The data buffer used by send() to send data from the application
         # thread into the network thread. Bounded in size.
         self._sendbuf = queue.Queue(maxsize=1000)
+        self._receivebuf = queue.Queue(maxsize=1000)
 
 
     ###########################################################################
@@ -177,9 +180,43 @@ class BTCPClientSocket(BTCPSocket):
         print("Starting phase one of three way handshake")
         
         #create random number
-        ran_num = ''
-        for i in range(16):
-            ran_num = ran_num + str(randint(0, 9))
+        seq_num = getrandbits(16)
+
+        #flags 
+        # TODO: create enum for flags
+        # 0x1 = SYN, 0x2 = ACK, 0x3 = FIN
+        # SYN and ACK =     0X1 | 0X2
+        # check flag =      if (FLAG & 0x1) > 0: print("syn is set")
+
+        #sequence number, ack number (empty yet), flags, window, data length
+        #TODO: add packet/header class
+
+        #we set checksum to 0 then calculate it
+        temp_header = (seq_num, 0, '0x1', self.window, 0, 0)
+        payload = bytes(1000)
+
+        #set socket and generate checksum
+        sock = BTCPSocket(self.window, self.timeout)
+        checksum = sock.in_cksum(sock.build_segment_header(temp_header) + payload)
+
+        #use checksum for full header
+        header = (seq_num, 0, '0x1', self.window, 0, checksum)
+
+        #pack header for usage inside pack and create packet
+        pack = (sock.build_segment_header(temp_header), payload)
+
+        # self._sendbuf = queue for sending
+
+        #TODO: send syn packet to server
+
+        #get header checksum
+        #set header checksum field to checksum
+
+        # create syn packet (header + SYN payload)
+        # calculate checksum of packet
+        # send packet
+
+
 
         print("Starting phase two of three way handshake")
 
