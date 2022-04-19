@@ -2,8 +2,10 @@ import socket
 from btcp.btcp_socket import BTCPSocket, BTCPStates
 from btcp.lossy_layer import LossyLayer
 from btcp.constants import *
-from random import getrandbits
 
+#our own imports
+from poster import *
+from random import getrandbits
 import queue
 
 
@@ -55,6 +57,14 @@ class BTCPClientSocket(BTCPSocket):
 
         #set timeout in seconds
         self.socket.settimeout(1.5)
+        
+        #setup segment receival and segment sending
+        self.seg_sen = send_packet(self._sendbuf, self.socket)
+        self.seg_rec = receive_packet(self._receivebuf, self.socket)
+        
+    def start(self):
+        self.seg_rec.start()
+        self.seg_sen.start()
 
 
     ###########################################################################
@@ -215,45 +225,24 @@ class BTCPClientSocket(BTCPSocket):
         #add package to sendbuf
         self._sendbuf.put(pack)
 
-        #use socket to send data to address
-        done = False 
-        while done == False:
-            try: 
-                #block if neccesarry until something is available, timeout = 1.5 seconds
-                data, addr = self._sendbuf.get(True, 1.5)
-                self.socket.sendto(data, addr)
-            except queue.empty:
-                pass
-            #TODO: catch errors in except (OSERROR?)
-        #TODO: send syn packet to server
-
-        #get header checksum
-        #set header checksum field to checksum
-
-        # create syn packet (header + SYN payload)
-        # calculate checksum of packet
-        # send packet
-
-
+        #we now automaticly send SYN (due to SEG_SEN running)
 
         print("Starting phase two of three way handshake")
+        
+        #receive syn-ack
+        try:
+            data, addr = self._receivebuf.get(True, self.timeout)
+        except queue.Empty:
+            return False      
+        
+        #TODO: get packet from bytes
+        #TODO: check if ack = syn + 1
 
         print("Starting phase three of three way handshake")
-        #TODO:
-        # 1 The client randomly generates a 16-bit value, say x, puts this in the Sequence Number field
-        # of a bTCP segment with the SYN flag set, and sends the segment to the server.
-
-        # 2 is handled by the server
-
-        # 3  The client puts y + 1 in the Acknowledgement Number
-        # field of a bTCP segment with the ACK flag set. The Sequence Number field of that segment
-        # is x + 1.
 
         #TODO: window size (section 2.6)
-
-        #pass # present to be able to remove the NotImplementedError without having to implement anything yet.
-        #raise NotImplementedError("No implementation of connect present. Read the comments & code of client_socket.py.")
-
+        
+        #TODO: send ack to server
 
         #we only return after finishing the connection
         self.connection = True
@@ -323,7 +312,6 @@ class BTCPClientSocket(BTCPSocket):
         boolean or enum has the expected value. We do not think you will need
         more advanced thread synchronization in this project.
         """
-
         #TODO: section 2.3
 
         pass # present to be able to remove the NotImplementedError without having to implement anything yet.
