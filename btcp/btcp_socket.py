@@ -17,13 +17,10 @@ class BTCPStates(Enum):
     ACCEPTING = 1
     SYN_SENT  = 2
     SYN_RCVD  = 3
-    _         = 4 # There's an obvious state that goes here. Give it a name.
+    ESTABLISHED  = 4 # There's an obvious state that goes here. Give it a name.
     FIN_SENT  = 5
     CLOSING   = 6
-    __        = 7 # If you need more states, extend the Enum like this.
-    raise NotImplementedError("Check btcp_socket.py's BTCPStates enum. We left out some states you will need.")
-
-
+    
 class BTCPSocket:
     """Base class for bTCP client and server sockets. Contains static helper
     methods that will definitely be useful for both sending and receiving side.
@@ -44,8 +41,39 @@ class BTCPSocket:
         segment, the checksum field in the header should be set to 0x0000, and
         then the resulting checksum should be put in its place.
         """
-        pass # present to be able to remove the NotImplementedError without having to implement anything yet.
-        raise NotImplementedError("No implementation of in_cksum present. Read the comments & code of btcp_socket.py.")
+        
+        #TODO: we assume that we get the bTCP_header as input here
+        
+        # If we get an empty segment, return 0x0000
+        if not segment:
+            return 0x0000
+
+        #pad zero's if odd
+        if (len(segment) % 2 != 0): 
+            segment += b"\x00"      
+
+        #unpack segment due to big endian, use unsigned short
+        packages = struct.iter_unpack("!H", segment)  
+        #create initial checksum
+        cksum = 0x0000           
+        
+        #add package to checksum
+        for pk in packages:
+            cksum += pk[0]                   
+
+            #handle overflows
+            if (cksum > 0xFFFF):             
+                cksum = cksum & 0x0FFFF   
+                cksum += 1                   
+
+        #invert the checksum if it is not equal to 0xFFFF
+        if (cksum != 0xFFFF):
+            cksum = cksum.invert()
+
+        return cksum
+        
+        #pass # present to be able to remove the NotImplementedError without having to implement anything yet.
+        #raise NotImplementedError("No implementation of in_cksum present. Read the comments & code of btcp_socket.py.")
 
 
     @staticmethod
@@ -85,5 +113,12 @@ class BTCPSocket:
         tupling, so it's easy to simply return all of them in one go rather
         than make a separate method for every individual field.
         """
-        pass
-        raise NotImplementedError("No implementation of unpack_segment_header present. Read the comments & code of btcp_socket.py. You should really implement the packing / unpacking of the header into field values before doing anything else!")
+        
+        #TODO(maybe?) 
+        #    (src_port, dst_port, seq_num, ack_num, flags, window, checksum) = header[0], header[1], header[2], header[3], header[4], header[5], header[6]
+    	# payload = segment[header_length:]
+        #Joost implemented 
+        return struct.unpack("!HHBBHH", header)
+        
+        #pass
+        #raise NotImplementedError("No implementation of unpack_segment_header present. Read the comments & code of btcp_socket.py. You should really implement the packing / unpacking of the header into field values before doing anything else!")
