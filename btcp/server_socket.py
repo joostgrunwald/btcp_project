@@ -50,6 +50,9 @@ class BTCPServerSocket(BTCPSocket):
         
         self.connection = False
         self.source = source
+        
+        self.window = window
+        self.timeout = timeout
 
         # The data buffer used by lossy_layer_segment_received to move data
         # from the network thread into the application thread. Bounded in size.
@@ -237,7 +240,7 @@ class BTCPServerSocket(BTCPSocket):
             #check that SYN == 1
             or syn_number != 1
             #check that ack != 1
-            or ack_number != 1
+            or ack_number == 1
             #check that the checksum works
             or checksum != checksum_comp
             
@@ -272,11 +275,55 @@ class BTCPServerSocket(BTCPSocket):
         print("Syn-ack was succesfully send")
         
         #! received ACK package
+        
+        try:
+            data, addr = self._receivebuf.get(True, self.timeout)
+            
+            #check if header is long enough
+            if len(data) < 16:
+                raise ValueError("header is not long enough")
+            
+            #specify payload
+            payload = bytes(1000)
+            
+            #get unpacked header
+            header_temp = sock.unpack_segment_header(data)
+            
+            #unpack header
+            syn_number = header_temp[0]
+            ack_number = header_temp[1]
+            flag_byte = header_temp[2]
+            window = header_temp[3]
+            length = header_temp[4]
+            
+            #this is the given checksum
+            checksum = header_temp[5]
+            
+            #we calculate our own checksum from our data to compare
+            checksum_comp = sock.in_cksum(sock.build_segment_header(header_temp) + payload)
+            
+            #if the conditions dont hold we pass the try
+            if ( header_temp is None
+                #check that SYN == 1
+                or syn_number == 1
+                #check that ack != 1
+                or ack_number != 1
+                #check that the window works
+                or self.window != window 
+                #check that the checksum works
+                or checksum != checksum_comp
+                
+            ):
+                pass
+        except queue.Empty:
+            return False   
 
+        #if I am reached the try succeeded
+        print(f"Connected server with {addr}")
+        
         #we only return after finishing the connection
         #TODO: maybe set some more self values here
         self.connection = True
-        print("Succesfully connected server")
         return True
 
 
