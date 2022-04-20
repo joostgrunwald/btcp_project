@@ -38,7 +38,7 @@ class BTCPServerSocket(BTCPSocket):
     """
 
 
-    def __init__(self, window, timeout):
+    def __init__(self, window, timeout, source):
         """Constructor for the bTCP server socket. Allocates local resources
         and starts an instance of the Lossy Layer.
 
@@ -49,6 +49,7 @@ class BTCPServerSocket(BTCPSocket):
         self._lossy_layer = LossyLayer(self, SERVER_IP, SERVER_PORT, CLIENT_IP, CLIENT_PORT)
         
         self.connection = False
+        self.source = source
 
         # The data buffer used by lossy_layer_segment_received to move data
         # from the network thread into the application thread. Bounded in size.
@@ -59,11 +60,18 @@ class BTCPServerSocket(BTCPSocket):
         self._sendbuf = queue.Queue(maxsize=1000)
         self._receivebuf = queue.Queue(maxsize=1000)
         
+        #set socket
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        #set timeout in seconds
+        self.socket.settimeout(1.5)
+        
         #setup segment receival and segment sending
         self.seg_sen = send_packet(self._sendbuf, self.socket)
         self.seg_rec = receive_packet(self._receivebuf, self.socket)
         
     def start(self):
+        self.socket.bind(self.source)
         self.seg_rec.start()
         self.seg_sen.start()
 
@@ -196,30 +204,74 @@ class BTCPServerSocket(BTCPSocket):
             exit()
             
         print("Server starting phase one of three way handshake")
+
+        sock = BTCPSocket(self.window, self.timeout)            
+        
+        #! received SYN packet
+        data, addr = self._recvbuf.get()
+        
+        #check if header is long enough
+        if len(data) < 16:
+            raise ValueError("header is not long enough")
+        
+        #specify payload
+        payload = bytes(1000)
+        
+        #get unpacked header
+        header_temp = sock.unpack_segment_header(data)
+        
+        #unpack header
+        syn_number = header_temp[0]
+        ack_number = header_temp[1]
+        flag_byte = header_temp[2]
+        window = header_temp[3]
+        length = header_temp[4]
+        
+        #this is the given checksum
+        checksum = header_temp[5]
+        
+        #we calculate our own checksum from our data to compare
+        checksum_comp = sock.in_cksum(sock.build_segment_header(header_temp) + payload)
+        
+        if ( header_temp is None
+            #check that SYN == 1
+            or syn_number != 1
+            #check that ack != 1
+            or ack_number != 1
+            #check that the checksum works
+            or checksum != checksum_comp
             
-        #we will wait to receive a SYN packet
-        
-        
-        sock = BTCPSocket(self.window, timeout)
-
-        #received packet
-        rpacket = self._recvbuf.get()
-
-        if not None and \
-                rpacket.flags.syn == 1\
-                and sock.in_cksum(rpacket) == rpacket.checksum:
-            ack_num = rpacket.seq_num + 1
-        else:
+        ):
+            #if any of these conditions is true, we return False for the entire function
             return False
+        
+        print(f"A client from {addr} tries to connect.")
+        
+        #! send SYN-ACK package
+        #ack = syn + 1
+        ack_num = syn_number + 1
+                
+        #the seq num is 0 as we do not need it, flag = 0x3 (syn ack)
+        temp_header = (0, ack_num, '0x3', self.window, 0, 0)
+        
+        #create a payload
+        payload = bytes(1000)
 
-        #create random number
-        seq_num = getrandbits(16)
+        #generate checksum
+        checksum = sock.in_cksum(sock.build_segment_header(temp_header) + payload)
 
-        #create packet
-        header = sock.build_segment_header(seq_num, ack_num, flags, self.window, 0, checksum)
-        packet = (header, payload)
+        #use checksum for full header
+        header = (0, ack_num, '0x3', self.window, 0, checksum)
 
-        checksum = sock.in_cksum(header + payload)
+        #pack header for usage inside pack and create packet
+        pack = (sock.build_segment_header(header), payload)
+
+        #add package to sendbuf
+        self._sendbuf.put(pack)
+        
+        print("Syn-ack was succesfully send")
+        
+        #! received ACK package
 
         #we only return after finishing the connection
         #TODO: maybe set some more self values here
