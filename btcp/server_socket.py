@@ -1,10 +1,12 @@
 from btcp.btcp_socket import BTCPSocket, BTCPStates
 from btcp.lossy_layer import LossyLayer
 from btcp.constants import *
-from random import getrandbits
 
+#our own imports
+from poster import *
+from random import getrandbits
 import queue
-import struct
+
 
 
 class BTCPServerSocket(BTCPSocket):
@@ -45,6 +47,8 @@ class BTCPServerSocket(BTCPSocket):
         """
         super().__init__(window, timeout)
         self._lossy_layer = LossyLayer(self, SERVER_IP, SERVER_PORT, CLIENT_IP, CLIENT_PORT)
+        
+        self.connection = False
 
         # The data buffer used by lossy_layer_segment_received to move data
         # from the network thread into the application thread. Bounded in size.
@@ -52,8 +56,16 @@ class BTCPServerSocket(BTCPSocket):
         # size negotiation should solve.
         # For this rudimentary implementation, we simply hope receive manages
         # to be faster than send.
-        self._recvbuf = queue.Queue(maxsize=1000)
-
+        self._sendbuf = queue.Queue(maxsize=1000)
+        self._receivebuf = queue.Queue(maxsize=1000)
+        
+        #setup segment receival and segment sending
+        self.seg_sen = send_packet(self._sendbuf, self.socket)
+        self.seg_rec = receive_packet(self._receivebuf, self.socket)
+        
+    def start(self):
+        self.seg_rec.start()
+        self.seg_sen.start()
 
     ###########################################################################
     ### The following section is the interface between the transport layer  ###
@@ -177,6 +189,17 @@ class BTCPServerSocket(BTCPSocket):
         boolean or enum has the expected value. We do not think you will need
         more advanced thread synchronization in this project.
         """
+        
+        #check if there is no connection yet
+        if (self.connection):
+            print("ERROR: there is already an connection present (server)")
+            exit()
+            
+        print("Server starting phase one of three way handshake")
+            
+        #we will wait to receive a SYN packet
+        
+        
         sock = BTCPSocket(self.window, timeout)
 
         #received packet
@@ -198,11 +221,16 @@ class BTCPServerSocket(BTCPSocket):
 
         checksum = sock.in_cksum(header + payload)
 
-        
+        #we only return after finishing the connection
+        #TODO: maybe set some more self values here
+        self.connection = True
+        print("Succesfully connected server")
+        return True
 
 
-        pass # present to be able to remove the NotImplementedError without having to implement anything yet.
-        raise NotImplementedError("No implementation of accept present. Read the comments & code of server_socket.py.")
+
+        #pass # present to be able to remove the NotImplementedError without having to implement anything yet.
+        #raise NotImplementedError("No implementation of accept present. Read the comments & code of server_socket.py.")
 
         
 
