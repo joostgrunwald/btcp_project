@@ -2,8 +2,6 @@
 import contextlib
 import socket, argparse
 from Packet import Header, Packet, Payload
-from Receiver import Receiver
-from Sender import Sender
 from Poster import send_packet, receive_packet
 import queue
 
@@ -30,9 +28,9 @@ class Btcp:
         self.sock.settimeout(1)
 
         self.receivebuffer = queue.Queue(1000)
-        self.receiver = Receiver(self.receivebuffer, self.sock)
+        self.receiver = receive_packet(self.receivebuffer, self.sock)
         self.sendbuffer = queue.Queue(1000)
-        self.sender = Sender(self.sendbuffer, self.sock)
+        self.sender = send_packet(self.sendbuffer, self.sock)
 
     def start(self):
         self.sock.bind(self.source)
