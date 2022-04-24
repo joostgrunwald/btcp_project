@@ -1,8 +1,12 @@
 import unittest
-import filecmp
-import threading
 import time
 import sys
+import filecmp
+import threading
+import bTCP_server
+import bTCP_client
+import File
+import Runners
 
 """This exposes a constant bytes object called TEST_BYTES_128MIB which, as the
 name suggests, is 128 MiB in size. You can send it, receive it, and check it
@@ -16,9 +20,8 @@ You can also use the file large_input.py as-is for file transfer.
 """
 from large_input import TEST_BYTES_128MIB
 
-
-INPUTFILE  = "large_input.py"
-OUTPUTFILE = "testframework-output.file"
+INPUTFILE  = "largeinput.txt" #TODO: fix py conversion
+OUTPUTFILE = "largeoutput.txt"
 TIMEOUT = 100
 WINSIZE = 100
 INTF = "lo"
@@ -32,20 +35,21 @@ NETEM_REORDER = "delay 20ms reorder 25% 50%"
 NETEM_DELAY   = "delay " + str(TIMEOUT) + "ms 20ms"
 NETEM_ALL     = "{} {} {} {}".format(NETEM_CORRUPT, NETEM_DUP, NETEM_LOSS, NETEM_REORDER)
 
-
 def run_command_with_output(command, input=None, cwd=None, shell=True):
     """run command and retrieve output"""
     import subprocess
     try:
         process = subprocess.Popen(command, cwd=cwd, shell=shell, stdout=subprocess.PIPE, stdin=subprocess.PIPE)
     except Exception as e:
-        print("problem running command : \n   ", str(command), "\n problem: ", str(e), file=sys.stderr)
+        print("problem running command : \n   ", command, "\n problem: ", e, file=sys.stderr)
+
 
     [stdoutdata, stderrdata] = process.communicate(input)  # no pipes set for stdin/stdout/stdout streams so does effectively only just wait for process ends  (same as process.wait()
 
     if process.returncode:
         print(stderrdata, file=sys.stderr)
-        print("\nproblem running command : \n   ", str(command), "\n return value: ", process.returncode, file=sys.stderr)
+        print("\nproblem running command : \n   ", command, "\n return value: ", process.returncode, file=sys.stderr)
+
 
     return stdoutdata
 
@@ -56,19 +60,19 @@ def run_command(command,cwd=None, shell=True):
     try:
         process = subprocess.Popen(command, shell=shell, cwd=cwd)
         print("\nProcess started:", file=sys.stderr)
-        print(str(process), file=sys.stderr)
+        print(process, file=sys.stderr)
     except Exception as e:
-        print("problem running command : \n   ", str(command), "\n problem: ", str(e), file=sys.stderr)
+        print("problem running command : \n   ", command, "\n problem: ", e, file=sys.stderr)
 
     process.communicate()  # wait for the process to end
 
     if process.returncode:
-        print("problem running command : \n   ", str(command), "\n return value: ", process.returncode, file=sys.stderr)
-
+        print("problem running command : \n   ", command, "\n return value: ", process.returncode, file=sys.stderr)
+        
 
 class TestbTCPFramework(unittest.TestCase):
     """Test cases for bTCP"""
-
+    
     def setUp(self):
         """Setup before each test
 
@@ -82,14 +86,16 @@ class TestbTCPFramework(unittest.TestCase):
         # default netem rule (does nothing)
         print("\nSETTING UP NEW NETEM\n", file=sys.stderr)
         run_command(NETEM_ADD)
+        
+        # launch localhost server
+        print("\nLAUNCHING \n", file=sys.stderr)
 
         # launch localhost server
-        print("\nLAUNCHING SERVER THREAD\n", file=sys.stderr)
-        self._server_thread = threading.Thread(target=run_command_with_output,
-                                               args=("python3 server_app.py -w {} -t {} -o {}".format(WINSIZE, TIMEOUT, OUTPUTFILE), ))
-        self._server_thread.start()
+        self.serverrunner = Runners.ServerRunner(WINSIZE, TIMEOUT, OUTPUTFILE)
+        self.clientrunner = Runners.ClientRunner(WINSIZE, TIMEOUT, INPUTFILE)
+        self.clientfile = File.File(INPUTFILE)
+        self.serverfile = File.File(OUTPUTFILE)
         print("\nTEST SETUP COMPLETE\n", file=sys.stderr)
-
 
     def tearDown(self):
         """Clean up after every test
@@ -100,8 +106,7 @@ class TestbTCPFramework(unittest.TestCase):
         print("\nTEARING DOWN TEST ENVIRONMENT\n", file=sys.stderr)
         # clean the environment
         run_command(NETEM_DEL)
-
-
+    
     def joinServer(self):
         # close server
         # no actual work to do for this for our given implementation:
@@ -122,152 +127,145 @@ class TestbTCPFramework(unittest.TestCase):
         This is an example testcase that uses the client and server process
         to test your application. Feel free to use a different test setup.
         """
+        
         print("\nSTARTING TEST: IDEAL NETWORK\n", file=sys.stderr)
         # setup environment (nothing to set)
+        
+        self.serverrunner.start()
+        self.clientrunner.start()
 
-        # launch localhost client connecting to server
-        run_command_with_output("python3 client_app.py -w {} -t {} -i {}".format(WINSIZE, TIMEOUT, INPUTFILE))
-
-        # client sends content to server
-
-        # server receives content from client
-        self.joinServer()
+        self.clientrunner.join()
+        self.serverrunner.server.end()
+        self.serverrunner.join()
 
         # content received by server matches the content sent by client
         assert filecmp.cmp(INPUTFILE, OUTPUTFILE)
 
         print("\nFINISHED TEST: IDEAL NETWORK\n", file=sys.stderr)
 
-
     def test_flipping_network(self):
         """reliability over network with bit flips
         (which sometimes results in lower layer packet loss)"""
         print("\nSTARTING TEST: BITFLIPPING NETWORK\n", file=sys.stderr)
+        
         # setup environment
         run_command(NETEM_CHANGE.format(NETEM_CORRUPT))
+        
+        self.serverrunner.start()
+        self.clientrunner.start()
 
-        # launch localhost client connecting to server
-        run_command_with_output("python3 client_app.py -w {} -t {} -i {}".format(WINSIZE, TIMEOUT, INPUTFILE))
-
-        # client sends content to server
-
-        # server receives content from client
-        self.joinServer()
+        self.clientrunner.join()
+        self.serverrunner.server.end()
+        self.serverrunner.join()
 
         # content received by server matches the content sent by client
         assert filecmp.cmp(INPUTFILE, OUTPUTFILE)
 
         print("\nFINISHED TEST: BITFLIPPING NETWORK\n", file=sys.stderr)
 
-
     def test_duplicates_network(self):
         """reliability over network with duplicate packets"""
         print("\nSTARTING TEST: DUPLICATING NETWORK\n", file=sys.stderr)
+        
         # setup environment
         run_command(NETEM_CHANGE.format(NETEM_DUP))
+        
+        self.serverrunner.start()
+        self.clientrunner.start()
 
-        # launch localhost client connecting to server
-        run_command_with_output("python3 client_app.py -w {} -t {} -i {}".format(WINSIZE, TIMEOUT, INPUTFILE))
-
-        # client sends content to server
-
-        # server receives content from client
-        self.joinServer()
-
+        self.clientrunner.join()
+        self.serverrunner.server.end()
+        self.serverrunner.join()
+        
         # content received by server matches the content sent by client
         assert filecmp.cmp(INPUTFILE, OUTPUTFILE)
 
         print("\nFINISHED TEST: DUPLICATING NETWORK\n", file=sys.stderr)
 
-
     def test_lossy_network(self):
         """reliability over network with packet loss"""
         print("\nSTARTING TEST: LOSSY NETWORK\n", file=sys.stderr)
+        
         # setup environment
         run_command(NETEM_CHANGE.format(NETEM_LOSS))
+        
+        self.serverrunner.start()
+        self.clientrunner.start()
 
-        # launch localhost client connecting to server
-        run_command_with_output("python3 client_app.py -w {} -t {} -i {}".format(WINSIZE, TIMEOUT, INPUTFILE))
-
-        # client sends content to server
-
-        # server receives content from client
-        self.joinServer()
+        self.clientrunner.join()
+        self.serverrunner.server.end()
+        self.serverrunner.join()
 
         # content received by server matches the content sent by client
         assert filecmp.cmp(INPUTFILE, OUTPUTFILE)
 
         print("\nFINISHED TEST: LOSSY NETWORK\n", file=sys.stderr)
 
-
     def test_reordering_network(self):
         """reliability over network with packet reordering"""
         print("\nSTARTING TEST: REORDERING NETWORK\n", file=sys.stderr)
+        
         # setup environment
         run_command(NETEM_CHANGE.format(NETEM_REORDER))
+        
+        self.serverrunner.start()
+        self.clientrunner.start()
 
-        # launch localhost client connecting to server
-        run_command_with_output("python3 client_app.py -w {} -t {} -i {}".format(WINSIZE, TIMEOUT, INPUTFILE))
-
-        # client sends content to server
-
-        # server receives content from client
-        self.joinServer()
+        self.clientrunner.join()
+        self.serverrunner.server.end()
+        self.serverrunner.join()
 
         # content received by server matches the content sent by client
         assert filecmp.cmp(INPUTFILE, OUTPUTFILE)
 
         print("\nFINISHED TEST: REORDERING NETWORK\n", file=sys.stderr)
-
-
+        
     def test_delayed_network(self):
         """reliability over network with delay relative to the timeout value"""
         print("\nSTARTING TEST: DELAYED NETWORK\n", file=sys.stderr)
+        
         # setup environment
         run_command(NETEM_CHANGE.format(NETEM_DELAY))
 
-        # launch localhost client connecting to server
-        run_command_with_output("python3 client_app.py -w {} -t {} -i {}".format(WINSIZE, TIMEOUT, INPUTFILE))
+        self.serverrunner.start()
+        self.clientrunner.start()
 
-        # client sends content to server
-
-        # server receives content from client
-        self.joinServer()
+        self.clientrunner.join()
+        self.serverrunner.server.end()
+        self.serverrunner.join()
 
         # content received by server matches the content sent by client
         assert filecmp.cmp(INPUTFILE, OUTPUTFILE)
 
         print("\nFINISHED TEST: DELAYED NETWORK\n", file=sys.stderr)
-
-
+    
     def test_allbad_network(self):
         """reliability over network with all problems: corruption, duplication,
         delay, loss, reordering"""
         print("\nSTARTING TEST: ALL BAD NETWORK\n", file=sys.stderr)
+        
         # setup environment
         run_command(NETEM_CHANGE.format(NETEM_ALL))
+        
+        self.serverrunner.start()
+        self.clientrunner.start()
 
-        # launch localhost client connecting to server
-        run_command_with_output("python3 client_app.py -w {} -t {} -i {}".format(WINSIZE, TIMEOUT, INPUTFILE))
-
-        # client sends content to server
-
-        # server receives content from client
-        self.joinServer()
+        self.clientrunner.join()
+        self.serverrunner.server.end()
+        self.serverrunner.join()
 
         # content received by server matches the content sent by client
         assert filecmp.cmp(INPUTFILE, OUTPUTFILE)
 
         print("\nFINISHED TEST: ALL BAD NETWORK\n", file=sys.stderr)
 
-
 #    def test_command(self):
 #        #command=['dir','.']
 #        out = run_command_with_output("dir .")
 #        print(out)
+        
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     # Parse command line arguments
     import argparse
     parser = argparse.ArgumentParser(description="bTCP tests")
