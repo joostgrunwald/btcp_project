@@ -151,10 +151,7 @@ class Btcp:
 
         # Wait for ACK
         with contextlib.suppress(queue.Empty):
-            print("reachedme")
             data, addr = self.receivebuffer.get(True, self.timeout)
-            
-            print("reachedme")
                         
             #get packet 
             ackpacket = Packet.from_bytes(data)
@@ -178,8 +175,6 @@ class Btcp:
             
             #this is the given checksum
             checksum = header_temp[5]
-            
-            print("reachedme")
             
             #TODO: translate flag byte
             if str(flag_byte) != "0x2":
@@ -329,23 +324,65 @@ class Btcp:
 
     def start_termination(self, destination):
         # FIN Packet sturen
-        print("terminating client")
-        id = 42
-        synnumber = self.synnumber
-        header = Header(id, synnumber, 0, 0b1, self.window, 0, 0)
-        payload = Payload(bytes(1000))
-        finpacket = Packet(header, payload)
-        finpacket.set_checksum()
-        self.sendbuffer.put((finpacket.to_bytes(), destination))
+        print("Started phase one of client termination")
+        
+        syn_number = self.synnumber
+        
+        payload = bytes(1000)
+        
+        #set socket and generate checksum
+        sock = BTCPSocket(self.window, self.timeout)
+        
+        checksum = sock.in_cksum(sock.build_segment_header(syn_number, 0, False, False, True, self.window, 0, 0)
+                                 + payload)
+        
+        #build header including checksum
+        header = sock.build_segment_header(syn_number, 0, True, False, False, self.window, 0, checksum)
+        
+        self.sendbuffer.put((header + payload, destination))
+        
+        # id = 42
+        # synnumber = self.synnumber
+        # header = Header(id, synnumber, 0, 0b1, self.window, 0, 0)
+        # payload = Payload(bytes(1000))
+        # finpacket = Packet(header, payload)
+        # finpacket.set_checksum()
+        # self.sendbuffer.put((finpacket.to_bytes(), destination))
 
-        # FIN-ACK ontvangen
-        try:
+        #wait for FIN-ACK
+        with contextlib.suppress(queue.Empty):
             data, addr = self.receivebuffer.get(True, self.timeout)
-        except queue.Empty:
+            
+        #check if header is long enough
+        if len(data) < 16:
+            raise ValueError("header is not long enough")
+        
+        #get first 10 data bytes
+        headr = data[:10]
+        
+        #unpack header
+        header_temp = sock.unpack_segment_header(headr)
+        
+        #unpack header
+        syn_number = header_temp[0]
+        ack_number = header_temp[1]
+        flag_byte = hex(header_temp[2])
+        window = header_temp[3]
+        length = header_temp[4]
+        
+        #this is the given checksum
+        checksum = header_temp[5]
+        
+        if str(flag_byte) != "0x3":
+            print("Flag byte ct1 is wrong")
+            print(flag_byte)
             return False
-        finackpacket = Packet.from_bytes(data)
-        if finackpacket is None or finackpacket.header.fin != 1 or finackpacket.header.ack != 1 or addr != destination:
-            # print("Termination handshake failed with " + str(destination))
+        
+        #we calculate our own checksum from our data to compare
+        checksum_comp = sock.in_cksum(sock.build_segment_header(syn_number, ack_number, False, True, True, window, length, 0)
+                                      + payload)
+            
+        if header_temp is None or addr != destination or (checksum_comp != checksum):
             return False
 
         # ACK sturen
@@ -354,6 +391,7 @@ class Btcp:
         ackpacket = Packet(header, payload)
         ackpacket.set_checksum()
         self.sendbuffer.put((ackpacket.to_bytes(), destination))
+        
         print(f"Connection terminated with {str(destination)}")
         return True
 
