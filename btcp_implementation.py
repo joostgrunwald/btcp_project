@@ -4,14 +4,45 @@ import socket, argparse
 from Packet import Header, Packet, Payload
 from Poster import send_packet, receive_packet
 import queue
+from random import getrandbits
+from btcp.btcp_socket import BTCPSocket, BTCPStates
+from btcp.lossy_layer import LossyLayer
+from btcp.constants import *
+import binascii
 
 class Btcp:
+    """_summary_
+    
+    A client application makes use of the services provided by bTCP by calling
+    connect, send, shutdown, and close.
 
+    You're implementing the transport layer, exposing it to the application
+    layer as a (variation on) socket API.
+
+    To implement the transport layer, you also need to interface with the
+    network (lossy) layer. This happens by both calling into it
+    (LossyLayer.send_segment) and providing callbacks for it
+    (BTCPClientSocket.lossy_layer_segment_received, lossy_layer_tick).
+
+    Your implementation will operate in two threads, the network thread,
+    where the lossy layer "lives" and where your callbacks will be called from,
+    and the application thread, where the application calls connect, send, etc.
+    This means you will need some thread-safe information passing between
+    network thread and application thread.
+    Writing a boolean or enum attribute in one thread and reading it in a loop
+    in another thread should be sufficient to signal state changes.
+    Lists, however, are not thread safe, so to pass data and segments around
+    you probably want to use Queues, or a similar thread safe collection.
+    
+    TODO: add server
+    """
+    
     def __init__(self, source, window, timeout):
-        """Create a new UDP Receiver.
+        """Constructor for the bTCP client socket. Allocates local resources
+        and starts an instance of the Lossy Layer.
 
-        Args:
-            source: Tuple of source IP and source port
+        You can extend this method if you need additional attributes to be
+        initialized, but do *not* call connect from here.
         """
         self.source = source
         self.peer = None
@@ -39,103 +70,266 @@ class Btcp:
 
     def listen(self):
         if self.connected:
-            raise Exception("Cannot listen: connection already established!")
-
-        print("Start listening for incoming connections")
+            print("ERROR: there is already an connection present (server)")
+            exit(0)
 
         # Wait for handshake
         data, addr = self.receivebuffer.get()
-        synpacket = Packet.from_bytes(data)
-        if synpacket is None or\
-                synpacket.header.syn != 1 or\
-                synpacket.header.ack == 1 or\
-                synpacket.check_checksum() is False:
+        
+        #check if header is long enough
+        if len(data) < 16:
+            raise ValueError("header is not long enough")
+        
+        #specify payload
+        payload = bytes(1000)
+        
+        #get first 10 data bytes
+        headr = data[:10]
+        
+        #create socket and build header
+        sock = BTCPSocket(self.window, self.timeout)
+        header_temp = sock.unpack_segment_header(headr)
+        
+        #unpack header
+        syn_number = header_temp[0]
+        ack_number = header_temp[1]
+        flag_byte = hex(header_temp[2])
+        window = header_temp[3]
+        length = header_temp[4]
+        
+        #this is the given checksum
+        checksum = header_temp[5]
+        
+        #TODO: translate flag byte
+        if str(flag_byte) != "0x4":
+            #print("Flag byte s1 is wrong")
+            #print(flag_byte)
             return False
+        
+        #we calculate our own checksum from our data to compare
+        checksum_comp = sock.in_cksum(sock.build_segment_header(syn_number, ack_number, True, False, False, window, length, 0)
+                                      + payload)
+        
+        if ( header_temp is None
+            #check that SYN == 1
+            or syn_number == 0
+            #check that ack != 1
+            or ack_number != 0
+            #check that the checksum works
+            or checksum != checksum_comp
+            
+        ):
+            #if any of these conditions is true, we return False for the entire function
+            return False
+        
+        #output
+        print(f"A client from {addr} tries to connect.")
 
-        print(f"Incoming connection from {str(addr)}")
-
-        if synpacket.header.window < self.window:
-            self.window = synpacket.header.window
-        # Send SYN-ACK
-        header = Header(synpacket.header.id, 0, synpacket.header.synnumber + 1, 0b10010, self.window, 0, 0)
-        payload = Payload(bytes(1000))
-        synackpacket = Packet(header, payload)
-        synackpacket.set_checksum()
-        self.sendbuffer.put((synackpacket.to_bytes(), addr))
+        #adjust window
+        if window < self.window:
+            self.window = window
+            
+        #! send SYN-ACK package
+        #ack = syn + 1
+        ack_num = syn_number + 1
+        prev_ack = ack_num
+        
+        #generate random sequence number
+        seq_num = getrandbits(16)
+        
+        #create new checksum
+        checksum = sock.in_cksum(sock.build_segment_header(seq_num, ack_num, True, True, False, self.window, 0, 0)
+                                 + payload)
+        
+        #build header including checksum
+        header = sock.build_segment_header(seq_num, ack_num, True, True, False, self.window, 0, checksum)
+        
+        #send syn-ack to client
+        self.sendbuffer.put((header + payload, addr))
+        
+        #! receive ACK package
 
         # Wait for ACK
         with contextlib.suppress(queue.Empty):
+            print("reachedme")
             data, addr = self.receivebuffer.get(True, self.timeout)
+            
+            print("reachedme")
+                        
+            #get packet 
             ackpacket = Packet.from_bytes(data)
-            if ackpacket is None or \
-                    ackpacket.header.ack != 1 or \
-                    ackpacket.header.syn == 1 or \
-                    ackpacket.header.id != synackpacket.header.id or \
-                    ackpacket.header.window != self.window or \
-                    ackpacket.check_checksum() is False:
+            
+            #check if header is long enough
+            if len(data) < 16:
+                raise ValueError("header is not long enough")
+            
+            #get first 10 data bytes
+            headr = data[:10]
+            
+            #create socket and build header
+            header_temp = sock.unpack_segment_header(headr)
+            
+            #unpack header
+            syn_number = header_temp[0]
+            ack_number = header_temp[1]
+            flag_byte = hex(header_temp[2])
+            window = header_temp[3]
+            length = header_temp[4]
+            
+            #this is the given checksum
+            checksum = header_temp[5]
+            
+            print("reachedme")
+            
+            #TODO: translate flag byte
+            if str(flag_byte) != "0x2":
+                print("Flag byte s2 is wrong")
+                print(flag_byte)
+                return False
+            
+            #we calculate our own checksum from our data to compare
+            checksum_comp = sock.in_cksum(sock.build_segment_header(syn_number, ack_number, False, True, False, window, length, 0)
+                                        + payload)
+        
+            #if the conditions dont hold we pass the try
+            if ( header_temp is None
+                #check that SYN == 1
+                or syn_number != prev_ack
+                #check that ack != 1
+                or ack_number != seq_num + 1
+                #check that the window works
+                or self.window != window 
+                #check that the checksum works
+                or checksum != checksum_comp
+                
+            ):
+                print("headers do not match for ACK")
                 pass
+            else:
+                print("Ack went fine")
 
-        print(f"Connection established with {str(addr)}")
+        print(f"Server connection established with {str(addr)}")
         self.peer = addr
-        self.acknumber = synpacket.header.synnumber + 1
+        self.acknumber = ack_num
         self.connected = True
-        self.id = synackpacket.header.id
 
         return True
 
     def connect(self, destination):
         if self.connected:
-            raise Exception("Cannot connect: connection already established!")
+            print("ERROR: there is already an connection present (client)")
+            exit()
+            #TODO: exception or termination of some kind?
 
-        print(f"Starting handshake with {str(destination)}")
+        print(f"Starting phase one of three way handshake with {str(destination)}")
+        
+        #create random number
+        seq_num = getrandbits(16)
 
-        # Send SYN
-        id = 42
-        synnumber = self.synnumber
-        header = Header(id, synnumber, 0, 0b10, self.window, 0, 0)
-        payload = Payload(bytes(1000))
-        synpacket = Packet(header, payload)
-        synpacket.set_checksum()
-        self.sendbuffer.put((synpacket.to_bytes(), destination))
+        #flags 
+        # TODO: create enum for flags
+        # 0x1 = SYN, 0x2 = ACK, 0x3 = FIN
+        # SYN and ACK =     0X1 | 0X2
+        # check flag =      if (FLAG & 0x1) > 0: print("syn is set")
 
+        #sequence number, ack number (empty yet), flags, window, data length
+        #TODO: add packet/header class
+        
+        #we set checksum to 0 then calculate it
+        payload = bytes(1000)
+        
+        #set socket and generate checksum
+        sock = BTCPSocket(self.window, self.timeout)
+        
+        checksum = sock.in_cksum(sock.build_segment_header(seq_num, 0, True, False, False, self.window, 0, 0)
+                                 + payload)
+        
+        #build header including checksum
+        header = sock.build_segment_header(seq_num, 0, True, False, False, self.window, 0, checksum)
+        
+        self.sendbuffer.put((header + payload, destination))
+
+        print(f"Starting phase two of three way handshake with {str(destination)}")
+        
         # Syn-Ack ontvangen
         try:
             data, addr = self.receivebuffer.get(True, self.timeout)
         except queue.Empty:
             return False
 
-        synackpacket = Packet.from_bytes(data)
-
-        # Controleren of ack = syn+1
-        if synackpacket is not None and \
-                synackpacket.header.acknumber == synnumber + 1\
-                and synackpacket.header.syn == 1\
-                and synackpacket.header.ack == 1\
-                and synackpacket.header.id == id\
-                and synackpacket.check_checksum() is True:
-            synnumber = synackpacket.header.acknumber
-        else:
+        #check if header is long enough
+        if len(data) < 16:
+            raise ValueError("header is not long enough")
+        
+        #get first 10 data bytes
+        headr = data[:10]
+        
+        #unpack header
+        header_temp = sock.unpack_segment_header(headr)
+        
+        #unpack header
+        syn_number = header_temp[0]
+        ack_number = header_temp[1]
+        flag_byte = hex(header_temp[2])
+        window = header_temp[3]
+        length = header_temp[4]
+        
+        #this is the given checksum
+        checksum = header_temp[5]
+        
+        #TODO: translate flag byte
+        if str(flag_byte) != "0x6":
+            #print("Flag byte c1 is wrong")
+            #print(flag_byte)
             return False
+        
+        #we calculate our own checksum from our data to compare
+        checksum_comp = sock.in_cksum(sock.build_segment_header(syn_number, ack_number, True, True, False, window, length, 0)
+                                      + payload)
+                
 
-        self.window = synackpacket.header.window
+        #check that header is not empty
+        if ( header_temp is None
+            #check that ACK = SYN + 1
+            or ack_number != seq_num + 1 
+            #check that syn is defined
+            or syn_number == 0
+            #check that the checksum works
+            or (checksum != checksum_comp)
+            
+        ):
+            return False
+        
+        self.window = window
+        
+        #! Sending ack
+        
+        #ack = y + 1
+        ack_number = syn_number + 1
+        
+        #syn = x + 1
+        syn_number = seq_num + 1
+        
+        #checksum generation
+        checksum = sock.in_cksum(sock.build_segment_header(syn_number, ack_number, False, True, False, self.window, 0, 0)
+                                 + payload)
+        
+        #build header including checksum
+        header = sock.build_segment_header(syn_number, ack_number, False, True, False, self.window, 0, checksum)
+        
+        #send 
+        self.sendbuffer.put((header + payload, destination))
 
-        # Ack sturen naar server
-        header = Header(id, 0, synnumber, 0b10000, self.window, 0, 0)
-        payload = Payload(bytes(1000))
-        ackpacket = Packet(header, payload)
-        ackpacket.set_checksum()
-        self.sendbuffer.put((ackpacket.to_bytes(), destination))
-
-        print(f"Connection established with {str(destination)}")
+        print(f"Client connection established with {str(destination)}")
         self.peer = destination
-        self.synnumber = synnumber
+        self.synnumber = syn_number
         self.connected = True
-        self.id = id
 
         return True
 
     def start_termination(self, destination):
         # FIN Packet sturen
+        print("terminating client")
         id = 42
         synnumber = self.synnumber
         header = Header(id, synnumber, 0, 0b1, self.window, 0, 0)
@@ -164,6 +358,7 @@ class Btcp:
         return True
 
     def respond_termination(self, destination, finpacket):
+        print("terminating server")
         # FIN-ACK sturen als FIN packet ontvangen is
         header = Header(finpacket.header.id, 0, finpacket.header.synnumber + 1, 0b10001, self.window, 0, 0)
         payload = Payload(bytes(1000))
